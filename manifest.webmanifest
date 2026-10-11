@@ -1,6 +1,6 @@
 {
-  "name": "圈问",
-  "short_name": "圈问",
+  "name": "W",
+  "short_name": "W",
   "description": "框选页面里不懂的地方，AI 讲解，自动记生词、错题，每天生成总结和题目。",
   "lang": "zh-CN",
   "start_url": "./index.html",

@@ -1,5 +1,5 @@
-/* 圈问 · 离线缓存：只缓存页面文件和 PDF 引擎，AI 请求一律直连，不经过缓存 */
-var VERSION = 'quanwen-v6';
+/* W · 离线缓存：只缓存页面文件和 PDF 引擎，AI 请求一律直连，不经过缓存 */
+var VERSION = 'quanwen-v8';
 var SHELL = ['./', 'index.html', 'style.css', 'app.js', 'ai.js', 'db.js', 'notes.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', function (e) {

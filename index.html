@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>圈问</title>
+<title>W</title>
 <meta name="theme-color" content="#2346c8">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="圈问">
+<meta name="apple-mobile-web-app-title" content="W">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -18,7 +18,7 @@
 
 <header class="top">
   <div class="brand">
-    <h1>圈问</h1>
+    <h1>W</h1>
     <span class="who" id="whoBadge"></span>
   </div>
 </header>
@@ -66,7 +66,7 @@
       <div class="actions tight">
         <label class="btn primary" for="nbImport">导入 PDF / 图片</label>
         <button class="btn" id="nbNew" type="button">新建空白笔记本</button>
-        <input id="nbImport" type="file" accept="application/pdf,image/*" hidden>
+        <input id="nbImport" type="file" accept="application/pdf,image/*" multiple hidden>
       </div>
     </div>
     <div class="nb-grid" id="nbGrid"></div>
@@ -76,6 +76,7 @@
     <div class="ed-head">
       <button class="btn small" id="edBack" type="button">‹ 文档</button>
       <button class="ed-title" id="edTitle" type="button">无标题</button>
+      <span class="saveind" id="saveInd" aria-live="polite"></span>
       <span class="grow"></span>
       <button class="btn small" id="edPages" type="button" aria-pressed="false" aria-label="目录">目录 1 / 1</button>
       <button class="btn small" id="edExport" type="button">导出</button>
@@ -88,10 +89,9 @@
         <button type="button" data-tool="pen" aria-pressed="true">笔</button>
         <button type="button" data-tool="hl" aria-pressed="false">荧光笔</button>
         <button type="button" data-tool="eraser" aria-pressed="false">橡皮</button>
-        <button type="button" data-tool="lasso" aria-pressed="false">套索</button>
+        <button type="button" data-tool="lasso" aria-pressed="false">选中</button>
         <button type="button" data-tool="text" aria-pressed="false">文字</button>
         <button type="button" data-tool="sticky" aria-pressed="false">便利贴</button>
-        <button type="button" data-tool="move" aria-pressed="false">选择</button>
         <button type="button" id="nImgBtn">图片</button>
         <button type="button" id="nStickerBtn">贴纸</button>
       </div>
@@ -100,21 +100,18 @@
         <button type="button" id="nRedo" aria-label="重做">↷</button>
         <button type="button" id="nPaste" hidden>粘贴</button>
       </div>
-      <div class="tg">
-        <button type="button" id="nFinger" aria-pressed="false">防误触</button>
-      </div>
     </div>
     <div class="ed-opts" id="nOpts"></div>
     <div class="ed-body">
       <div class="ed-stage" id="nStage">
-        <div class="page-wrap" id="pageWrap">
+        <div class="strip" id="strip"><div class="page-wrap" id="pageWrap">
           <canvas id="bgC"></canvas>
           <div class="objs" id="objs"></div>
           <canvas id="inkC"></canvas>
           <canvas id="liveC"></canvas>
           <div class="selbar" id="selBar" hidden></div>
           <div class="selbar" id="objBar" hidden></div>
-        </div>
+        </div></div>
       </div>
       <aside class="toc" id="nToc" hidden aria-label="目录">
         <div class="toc-head"><b>目录</b><button class="btn small" id="tocClose" type="button">关闭</button></div>
@@ -123,7 +120,7 @@
         <div id="tocBody"></div>
       </aside>
       <aside class="drawer" id="nDrawer" hidden aria-label="AI 助手">
-        <div class="drawer-head" id="drawerHead"><b>✨ AI 助手</b><span class="grow"></span><button class="btn small" id="drawerClose" type="button">收起</button></div>
+        <div class="drawer-head" id="drawerHead"><b>✨ AI 助手</b><span class="grow"></span><button class="btn small" id="drawerHist" type="button">历史</button><button class="btn small" id="drawerClose" type="button">收起</button></div>
         <div id="nDrawerBody">
     <section class="pane answer-pane" id="answerPane" aria-label="讲解">
         <div class="modebar">
@@ -211,11 +208,13 @@
     <h3>习惯</h3>
     <label class="check" for="autoWord"><input type="checkbox" id="autoWord">讲解完自动把生词、概念记进生词本</label>
     <label class="check" for="autoWrong"><input type="checkbox" id="autoWrong">解题接力里没做对的题，自动记进错题本</label>
+    <label class="check" for="fingerAlways"><input type="checkbox" id="fingerAlways">手指也能写字（一般不用开：用过 Apple Pencil 之后，手指自动只负责滑动和缩放）</label>
   </section>
 
   <section class="card">
     <h3>数据</h3>
-    <p class="muted">所有记录都存在这台设备上。换设备或清理 Safari 数据之前，先导出备份。</p>
+    <p class="muted">笔记和记录都自动存在这台设备的 W 里，关掉重开不会丢。这个 app 没有自己的服务器，所以不会自动同步到别的设备。想换设备、重装图标或清理数据之前，先点“导出备份”，存到“文件”里（可以选 iCloud 云盘）。</p>
+    <p class="muted" id="storeInfo"></p>
     <div class="actions">
       <button class="btn" id="expBackup" type="button">导出备份</button>
       <label class="btn" for="impBackup">导入备份</label>

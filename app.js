@@ -1,4 +1,4 @@
-/* 圈问 · 主程序 */
+/* W · 主程序 */
 (function () {
   'use strict';
 
@@ -492,14 +492,18 @@
     /* 带手写的内容用强模型读，更准 */
     var tier = (o.strong || settings.strong) ? 'strong' : 'fast';
     var prompt = buildPrompt(!!img, typed, o.note || '');
-    topic = { tier: tier, prompt: prompt, img: img && img.blob, done: false,
+    topic = { tier: tier, prompt: prompt, img: img && img.blob, done: false, anchor: o.anchor || null,
       messages: [{ role: 'user', text: prompt, images: img ? [{ mime: img.mime, b64: img.b64 }] : [] }] };
     updateAskUi();
 
-    var t = $('thread'); t.textContent = '';
-    t.appendChild(userCard(img ? img.blob : null, typed, o.note ? '补充：' + o.note : ''));
+    var t = $('thread');
+    if (t.querySelector('.empty')) t.textContent = '';
+    else if (t.children.length) t.appendChild(el('hr', 'thsep'));
+    var uc = userCard(img ? img.blob : null, typed, o.note ? '补充：' + o.note : '');
+    t.appendChild(uc);
     var card = el('div', 'msg a'), body = el('div', 'body');
     card.appendChild(body); t.appendChild(card);
+    uc.scrollIntoView({ block: 'start', behavior: 'smooth' });
 
     var full = await run(topic.messages, tier, body);
     if (full == null) return;
@@ -521,12 +525,37 @@
     var logId = DB.uid();
     var thumb = null;
     if (img) { try { thumb = (await AI.prepareImage(img.blob, 420)).blob; } catch (e) {} }
-    DB.put({ id: logId, type: 'log', ts: Date.now(), day: DB.dayKey(), mode: logMode, title: title.slice(0, 120), text: out.visible, img: thumb }).catch(function () {});
+    DB.put({ id: logId, type: 'log', ts: Date.now(), day: DB.dayKey(), nb: (window.QWNotes && window.QWNotes.currentId()) || '', mode: logMode, title: title.slice(0, 120), text: out.visible, img: thumb }).catch(function () {});
 
     addTools(card);
     if (kind === 'solve') await afterSolve(card, data && data.solve && typeof data.solve === 'object' ? data.solve : null, out.visible, img);
     else if (words.length) await afterWords(card, words, ctxLine, kind === 'concept' ? 'sub' : 'en', lang);
   }
+
+  /* 这本笔记以前问过的内容：点一条，把当时的问答调回来 */
+  async function showHistory() {
+    var nbid = (window.QWNotes && window.QWNotes.currentId()) || '';
+    var logs = (await DB.all('log')).filter(function (x) { return !nbid || x.nb === nbid; }).sort(function (a, b) { return b.ts - a.ts; }).slice(0, 40);
+    var t = $('thread');
+    var old = t.querySelector('.histlist'); if (old) { old.remove(); return; }
+    var box = el('div', 'histlist');
+    box.appendChild(el('strong', null, logs.length ? '这本笔记的提问记录（点一条查看）' : '这本笔记还没有提问记录。'));
+    logs.forEach(function (x) {
+      var b = el('button', 'hist-item', new Date(x.ts).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '  ' + (x.title || '提问'));
+      b.type = 'button';
+      b.addEventListener('click', function () {
+        if (t.querySelector('.empty')) t.textContent = '';
+        var u = el('div', 'msg u'); u.textContent = x.title || '提问';
+        if (x.img) { u.textContent = ''; var im = el('img'); im.alt = ''; im.src = URL.createObjectURL(x.img); u.appendChild(im); }
+        var c = el('div', 'msg a'), body = el('div', 'body'); renderAnswer(body, x.text || ''); c.appendChild(body);
+        t.appendChild(el('hr', 'thsep')); t.appendChild(u); t.appendChild(c);
+        box.remove(); u.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      });
+      box.appendChild(b);
+    });
+    t.insertBefore(box, t.firstChild);
+  }
+  var hb = document.getElementById('drawerHist'); if (hb) hb.addEventListener('click', showHistory);
 
   async function askFollow(q) {
     if (!topic || !topic.done) return;
@@ -555,10 +584,12 @@
       row.appendChild(b2);
     }
     if (window.QWNotes && window.QWNotes.canInsert()) {
-      var b3 = el('button', 'btn small', '存到笔记'); b3.type = 'button';
+      var b3 = el('button', 'btn small', '贴到笔记页'); b3.type = 'button';
+      var anchor = topic.anchor, ans = topic.messages.length > 1 ? topic.messages[topic.messages.length - 1].text : '';
       b3.addEventListener('click', function () {
-        var txt = (topic && topic.messages.length > 1) ? topic.messages[topic.messages.length - 1].text : '';
-        window.QWNotes.addSticky(txt);
+        var lines = String(ans).split('\n').map(function (x) { return x.trim(); }).filter(Boolean);
+        var txt = lines.join('\n'); if (txt.length > 330) txt = txt.slice(0, 330).replace(/\s+\S*$/, '') + '…';
+        if (window.QWNotes.addSticky(txt, anchor)) { b3.textContent = '已贴上 ✓'; b3.disabled = true; }
       });
       row.appendChild(b3);
     }
@@ -885,14 +916,14 @@
     if (fmt === 'csv') {
       var lines = [['词条', '读音', '词性', '释义', '例句', '出处', '类别', '日期'].map(csvCell).join(',')];
       rows.forEach(function (x) { lines.push([x.term, x.reading || '', x.pos, x.meaning, x.example, x.context, x.kind === 'sub' ? '概念' : (x.lang || '英语'), fmtDay(x.ts)].map(csvCell).join(',')); });
-      saveFile('圈问-生词本.csv', '﻿' + lines.join('\r\n'), 'text/csv');
+      saveFile('W-生词本.csv', '﻿' + lines.join('\r\n'), 'text/csv');
     } else {
       var clean = function (s) { return String(s == null ? '' : s).replace(/[\t\r\n]+/g, ' '); };
       var out = ['#separator:tab', '#html:true'];
       rows.forEach(function (x) {
         out.push(clean(x.term) + (x.reading ? ' ' + clean(x.reading) : '') + (x.pos ? ' (' + clean(x.pos) + ')' : '') + '\t' + clean(x.meaning) + (x.example ? '<br><i>' + clean(x.example) + '</i>' : ''));
       });
-      saveFile('圈问-Anki.txt', out.join('\n'), 'text/plain');
+      saveFile('W-Anki.txt', out.join('\n'), 'text/plain');
     }
   }
 
@@ -986,7 +1017,7 @@
     out.textContent = msgs.join('　'); $('testBtn').disabled = false;
   });
   $('expBackup').addEventListener('click', async function () {
-    try { var t = await DB.exportAll(); await saveFile('圈问-备份-' + DB.dayKey() + '.json', t, 'application/json'); }
+    try { var t = await DB.exportAll(); await saveFile('W-备份-' + DB.dayKey() + '.json', t, 'application/json'); }
     catch (e) { toast('导出失败：' + errMsg(e)); }
   });
   $('impBackup').addEventListener('change', async function (e) {
