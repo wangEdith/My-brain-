@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>圈问</title>
+<meta name="theme-color" content="#2346c8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="圈问">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <h1>圈问</h1>
+    <span class="who" id="whoBadge"></span>
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<!-- 阅读 -->
+<main id="view-read" class="view">
+  <div class="reader" id="readerGrid">
+    <section class="pane" aria-label="页面">
+      <div class="toolbar">
+        <label class="btn" for="fileIn">打开 PDF / 图片</label>
+        <input id="fileIn" type="file" accept="application/pdf,image/*" hidden>
+        <div class="grow"><span class="pageinfo" id="pageInfo">示例页</span></div>
+        <span class="step">
+          <button class="btn icon" id="prevBtn" type="button" aria-label="上一页">‹</button>
+          <button class="btn icon" id="nextBtn" type="button" aria-label="下一页">›</button>
+        </span>
+        <span class="step">
+          <button class="btn icon" id="zoomOut" type="button" aria-label="缩小">−</button>
+          <span class="zoomval" id="zoomVal">100%</span>
+          <button class="btn icon" id="zoomIn" type="button" aria-label="放大">＋</button>
+        </span>
+        <button class="btn" id="drawBtn" type="button" aria-pressed="true">框选</button>
+      </div>
+      <div class="stage" id="stage">
+        <div class="sheet" id="sheet">
+          <canvas id="cv" width="10" height="10" aria-label="当前页面，可框选"></canvas>
+          <div class="selbox" id="selBox" hidden></div>
+        </div>
+      </div>
+      <p class="hint" id="hint"></p>
+    </section>
+
+    <section class="pane answer-pane" id="answerPane" aria-label="讲解">
+      <div class="modes" id="modes" role="group" aria-label="提问方式">
+        <button type="button" data-mode="en" aria-pressed="true">
+          <b>英语查词</b><span>原文 · 翻译 · 生词</span></button>
+        <button type="button" data-mode="sub" aria-pressed="false">
+          <b>学科讲解</b><span>白话讲 · 举例 · 概念</span></button>
+        <button type="button" data-mode="solve" aria-pressed="false">
+          <b>解题接力</b><span>圈题和我写的，从卡住处讲</span></button>
+        <button type="button" data-mode="ocr" aria-pressed="false">
+          <b>手写转文字</b><span>只转写，不解释</span></button>
+      </div>
+      <div class="modebar">
+        <label class="check" for="strong"><input type="checkbox" id="strong">用强模型（更准，更费额度）</label>
+      </div>
+
+      <div class="thread" id="thread" aria-live="polite"></div>
+
+      <form class="askbar" id="askForm" autocomplete="off">
+        <input type="text" id="askIn" placeholder="输入单词或问题" aria-label="输入单词或问题">
+        <button class="btn" id="imgBtn" type="button">选图</button>
+        <input id="imgIn" type="file" accept="image/*" hidden>
+        <button class="btn primary" id="sendBtn" type="submit">问</button>
+        <button class="btn" id="stopBtn" type="button" hidden>停止</button>
+        <button class="btn newq" id="newBtn" type="button" hidden>当作新问题问</button>
+      </form>
+    </section>
+  </div>
+</main>
+
+<!-- 笔记 -->
+<main id="view-notes" class="view" hidden>
+  <div id="nList">
+    <div class="page-head">
+      <h2>笔记</h2>
+      <div class="actions tight">
+        <button class="btn primary" id="nbNew" type="button">新建笔记本</button>
+        <label class="btn" for="nbImport">导入 PDF / 图片</label>
+        <input id="nbImport" type="file" accept="application/pdf,image/*" hidden>
+      </div>
+    </div>
+    <div class="nb-grid" id="nbGrid"></div>
+  </div>
+
+  <div id="nEditor" class="editor" hidden>
+    <div class="ed-head">
+      <button class="btn small" id="edBack" type="button">‹ 笔记本</button>
+      <button class="ed-title" id="edTitle" type="button">无标题</button>
+      <span class="grow"></span>
+      <button class="btn small" id="edPages" type="button">1 / 1</button>
+      <button class="btn small" id="edExport" type="button">导出</button>
+      <button class="btn small" id="edAI" type="button" aria-pressed="false">AI</button>
+      <button class="btn small" id="edFocus" type="button" aria-pressed="false">专注</button>
+    </div>
+    <div class="ed-tools" id="nTools">
+      <div class="tg" role="group" aria-label="工具">
+        <button type="button" data-tool="pen" aria-pressed="true">笔</button>
+        <button type="button" data-tool="hl" aria-pressed="false">荧光笔</button>
+        <button type="button" data-tool="eraser" aria-pressed="false">橡皮</button>
+        <button type="button" data-tool="lasso" aria-pressed="false">套索</button>
+        <button type="button" data-tool="text" aria-pressed="false">文字</button>
+        <button type="button" data-tool="sticky" aria-pressed="false">便利贴</button>
+        <button type="button" data-tool="move" aria-pressed="false">选择</button>
+        <button type="button" id="nImgBtn">图片</button>
+        <button type="button" id="nStickerBtn">贴纸</button>
+      </div>
+      <div class="tg">
+        <button type="button" id="nUndo" aria-label="撤销">↶</button>
+        <button type="button" id="nRedo" aria-label="重做">↷</button>
+        <button type="button" id="nPaste" hidden>粘贴</button>
+      </div>
+      <div class="tg">
+        <button type="button" id="nZoomOut" aria-label="缩小">−</button>
+        <button type="button" id="nZoomFit" class="zv" aria-label="适应宽度">100%</button>
+        <button type="button" id="nZoomIn" aria-label="放大">＋</button>
+      </div>
+      <div class="tg">
+        <button type="button" id="nFinger" aria-pressed="false">手指写字</button>
+      </div>
+    </div>
+    <div class="ed-opts" id="nOpts"></div>
+    <div class="ed-body">
+      <div class="ed-stage" id="nStage">
+        <div class="page-wrap" id="pageWrap">
+          <canvas id="bgC"></canvas>
+          <div class="objs" id="objs"></div>
+          <canvas id="inkC"></canvas>
+          <canvas id="liveC"></canvas>
+          <div class="selbar" id="selBar" hidden></div>
+          <div class="selbar" id="objBar" hidden></div>
+        </div>
+      </div>
+      <aside class="drawer" id="nDrawer" hidden>
+        <div class="drawer-head"><b>AI 讲解</b><button class="btn small" id="drawerClose" type="button">收起</button></div>
+        <div id="nDrawerBody"></div>
+      </aside>
+    </div>
+  </div>
+</main>
+
+<!-- 今日 -->
+<main id="view-today" class="view" hidden>
+  <div class="page-head">
+    <h2>学习总结</h2>
+    <input type="date" id="dayIn" aria-label="选择日期">
+  </div>
+  <div class="stats" id="stats"></div>
+  <div class="actions">
+    <button class="btn primary" id="digestBtn" type="button">生成这一天的总结和题目</button>
+    <button class="btn" id="digestStop" type="button" hidden>停止</button>
+  </div>
+  <p class="muted" id="digestNote"></p>
+  <div id="digestOut"></div>
+  <h3 class="sub">这一天的提问</h3>
+  <div id="dayLogs" class="loglist"></div>
+</main>
+
+<!-- 本子 -->
+<main id="view-book" class="view" hidden>
+  <div class="page-head">
+    <div class="seg" id="bookSeg" role="tablist" aria-label="本子分类">
+      <button type="button" role="tab" data-book="word" aria-selected="true">生词本<span class="count" id="cWord">0</span></button>
+      <button type="button" role="tab" data-book="wrong" aria-selected="false">错题本<span class="count" id="cWrong">0</span></button>
+      <button type="button" role="tab" data-book="question" aria-selected="false">问题集<span class="count" id="cQuestion">0</span></button>
+    </div>
+  </div>
+  <div class="book-tools" id="bookTools"></div>
+  <div class="book-list" id="bookList"></div>
+</main>
+
+<!-- 设置 -->
+<main id="view-settings" class="view" hidden>
+  <div class="page-head"><h2>设置</h2></div>
+
+  <section class="card">
+    <h3>AI 服务</h3>
+    <div class="seg wide" id="provSeg" role="group" aria-label="AI 服务">
+      <button type="button" data-prov="gemini" aria-pressed="true">Gemini</button>
+      <button type="button" data-prov="openai" aria-pressed="false">ChatGPT</button>
+      <button type="button" data-prov="claude" aria-pressed="false">Claude</button>
+    </div>
+    <label class="fld" for="keyIn">API 密钥
+      <input type="password" id="keyIn" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="粘贴密钥">
+    </label>
+    <p class="muted" id="keyHelp"></p>
+    <label class="fld" for="modelFast">日常模型（查词、翻译、讲解）
+      <input type="text" id="modelFast" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </label>
+    <label class="fld" for="modelStrong">强模型（解题接力、手写识别、每日总结）
+      <input type="text" id="modelStrong" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </label>
+    <div class="actions">
+      <button class="btn primary" id="testBtn" type="button">测试连接</button>
+      <span id="testOut" class="muted"></span>
+    </div>
+    <p class="muted">密钥只保存在这台设备的浏览器里，只会发给你选的那家 AI 服务。不要在别人的设备上填。</p>
+  </section>
+
+  <section class="card">
+    <h3>习惯</h3>
+    <label class="check" for="autoWord"><input type="checkbox" id="autoWord">讲解完自动把生词、概念记进生词本</label>
+    <label class="check" for="autoWrong"><input type="checkbox" id="autoWrong">解题接力里没做对的题，自动记进错题本</label>
+  </section>
+
+  <section class="card">
+    <h3>数据</h3>
+    <p class="muted">所有记录都存在这台设备上。换设备或清理 Safari 数据之前，先导出备份。</p>
+    <div class="actions">
+      <button class="btn" id="expBackup" type="button">导出备份</button>
+      <label class="btn" for="impBackup">导入备份</label>
+      <input id="impBackup" type="file" accept="application/json,.json" hidden>
+      <button class="btn danger" id="wipeBtn" type="button">清空所有记录</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h3>装到主屏幕</h3>
+    <p class="muted">在 Safari 里点分享按钮，选“添加到主屏幕”。之后从桌面图标打开，就是全屏的 app。</p>
+  </section>
+</main>
+
+<nav class="tabbar" id="tabbar" aria-label="主菜单">
+  <button type="button" data-view="read" aria-current="page"><i>圈</i>阅读</button>
+  <button type="button" data-view="notes"><i>笔</i>笔记</button>
+  <button type="button" data-view="today"><i>日</i>总结</button>
+  <button type="button" data-view="book"><i>复</i>复习</button>
+  <button type="button" data-view="settings"><i>设</i>设置</button>
+</nav>
+
+<!-- 练习 -->
+<div class="overlay" id="practice" hidden role="dialog" aria-modal="true" aria-label="练习">
+  <div class="sheetbox">
+    <div class="sheet-head"><span id="pracCount"></span><button class="btn" id="pracClose" type="button">结束</button></div>
+    <div id="pracBody"></div>
+  </div>
+</div>
+
+<!-- 笔记里的对话框 -->
+<div class="overlay" id="nDialog" hidden role="dialog" aria-modal="true" aria-label="对话框">
+  <div class="sheetbox" id="nDialogBox"></div>
+</div>
+<input id="nImgIn" type="file" accept="image/*" hidden>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="ai.js"></script>
+<script src="db.js"></script>
+<script src="app.js"></script>
+<script src="notes.js"></script>
+</body>
+</html>
