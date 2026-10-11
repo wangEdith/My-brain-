@@ -83,7 +83,7 @@
   }
 
   /* ================= 视图切换 ================= */
-  var currentView = 'read';
+  var currentView = 'notes';
   function showView(name) {
     if (currentView === 'notes' && name !== 'notes' && window.QWNotes) window.QWNotes.leave();
     currentView = name;
@@ -181,7 +181,7 @@
     $('zoomOut').disabled = zoom <= ZOOMS[0];
     $('zoomIn').disabled = zoom >= ZOOMS[ZOOMS.length - 1];
   }
-  function clearSel() { sel = null; selBox.hidden = true; }
+  function clearSel() { sel = null; selBox.hidden = true; var sc = $('selC'); if (sc && sc.width) sc.getContext('2d').clearRect(0, 0, sc.width, sc.height); }
 
   async function renderPage() {
     if (currentView !== 'read') return;
@@ -235,13 +235,19 @@
     await renderPage();
   }
 
-  /* ---------- 框选 ---------- */
+  /* ---------- 圈选 / 框选 ---------- */
+  var selC = $('selC');
+  function freeMode() { return settings.shape !== 'box'; }
   function applyDrawMode() {
     cv.style.touchAction = settings.draw ? 'none' : 'pan-x pan-y pinch-zoom';
     $('drawBtn').setAttribute('aria-pressed', settings.draw ? 'true' : 'false');
-    $('hint').textContent = settings.draw
-      ? '用手指、鼠标或 Apple Pencil 拖出一个框，松手就提问。要移动页面时，先点一下“框选”关掉。'
-      : '现在可以用手指滚动页面。要框选就点“框选”打开（Apple Pencil 和鼠标随时能框选）。';
+    $('shapeBtn').textContent = freeMode() ? '圈选' : '框选';
+    $('shapeBtn').title = freeMode() ? '现在是自由圈选：画圈、画线都行。点一下换成拖矩形框。' : '现在是矩形框选。点一下换成自由圈选。';
+    $('hint').textContent = !settings.draw
+      ? '现在可以用手指滚动页面。要选内容就点“选取”打开（Apple Pencil 和鼠标随时能选）。'
+      : freeMode()
+        ? '用笔、手指或鼠标在要问的字上画个圈（圈不圆也行），松手就提问，圈外的字不会被问到。只想选一个词，就围着它画小圈，或者在它下面划一条线。'
+        : '拖出一个矩形框，松手就提问。';
   }
   function localPoint(e) {
     var r = cv.getBoundingClientRect();
@@ -253,28 +259,74 @@
     selBox.style.left = x + 'px'; selBox.style.top = y + 'px'; selBox.style.width = w + 'px'; selBox.style.height = h + 'px';
     return { x: x, y: y, w: w, h: h };
   }
+  function sizeSelC() {
+    var r = cv.getBoundingClientRect(), d = Math.min(window.devicePixelRatio || 1, 2);
+    var w = Math.round(r.width * d), h = Math.round(r.height * d);
+    if (selC.width !== w || selC.height !== h) { selC.width = w; selC.height = h; }
+    selC.style.width = r.width + 'px'; selC.style.height = r.height + 'px';
+    return d;
+  }
+  function paintPath(pts, closed) {
+    var d = sizeSelC(), c = selC.getContext('2d');
+    c.setTransform(d, 0, 0, d, 0, 0); c.clearRect(0, 0, selC.width, selC.height);
+    if (!pts || pts.length < 2) return;
+    c.beginPath(); c.moveTo(pts[0].x, pts[0].y);
+    for (var i = 1; i < pts.length; i++) c.lineTo(pts[i].x, pts[i].y);
+    if (closed) c.closePath();
+    c.lineJoin = 'round'; c.lineCap = 'round';
+    if (closed) { c.fillStyle = 'rgba(255, 212, 59, 0.22)'; c.fill(); }
+    c.lineWidth = 3; c.strokeStyle = '#e0a800'; c.stroke();
+  }
+  function polyArea(p) {
+    var a = 0; for (var i = 0; i < p.length; i++) { var q = p[(i + 1) % p.length]; a += p[i].x * q.y - q.x * p[i].y; }
+    return Math.abs(a) / 2;
+  }
   cv.addEventListener('pointerdown', function (e) {
     if (e.pointerType === 'touch' && !settings.draw) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
+    clearSel();
     var p = localPoint(e);
-    drag = { id: e.pointerId, a: p, b: p };
+    drag = { id: e.pointerId, a: p, b: p, pts: [p], free: freeMode() };
     try { cv.setPointerCapture(e.pointerId); } catch (err) {}
-    paintBox(p, p);
+    if (drag.free) paintPath(drag.pts, false); else paintBox(p, p);
   });
   cv.addEventListener('pointermove', function (e) {
     if (!drag || e.pointerId !== drag.id) return;
-    drag.b = localPoint(e); paintBox(drag.a, drag.b);
+    if (drag.free) {
+      var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+      if (!evs.length) evs = [e];
+      evs.forEach(function (ev) { var p = localPoint(ev), l = drag.pts[drag.pts.length - 1]; if (Math.hypot(p.x - l.x, p.y - l.y) >= 1.5) drag.pts.push(p); });
+      paintPath(drag.pts, false);
+    } else { drag.b = localPoint(e); paintBox(drag.a, drag.b); }
   });
   function endDrag(e, cancelled) {
     if (!drag || e.pointerId !== drag.id) return;
     var d = drag; drag = null;
-    var r = paintBox(d.a, d.b);
-    if (cancelled || r.w < 24 || r.h < 18) { clearSel(); return; }
-    sel = r; regionToAsk();
+    if (!d.free) {
+      var r = paintBox(d.a, d.b);
+      if (cancelled || r.w < 24 || r.h < 18) { clearSel(); return; }
+      sel = r; regionToAsk(); return;
+    }
+    if (cancelled || d.pts.length < 4) { clearSel(); return; }
+    var x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    d.pts.forEach(function (p) { x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); });
+    var bw = x1 - x0, bh = y1 - y0;
+    if (bw < 10 && bh < 10) { clearSel(); return; }
+    /* 圈得闭合（面积够大）就按圈裁，只留圈里的字；划一条线（下划线、波浪线）就按线所在的那一条带 */
+    var closedShape = polyArea(d.pts) > 0.2 * bw * bh && bw > 12 && bh > 12;
+    var pad = 8;
+    if (!closedShape && bh < 26) { y0 -= 14; y1 += 10; x0 -= 10; x1 += 10; }
+    x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad);
+    var rect = cv.getBoundingClientRect();
+    x1 = Math.min(rect.width, x1 + pad); y1 = Math.min(rect.height, y1 + pad);
+    sel = { x: x0, y: y0, w: x1 - x0, h: y1 - y0, poly: closedShape ? d.pts : null };
+    paintPath(d.pts, closedShape);
+    regionToAsk();
   }
   cv.addEventListener('pointerup', function (e) { endDrag(e, false); });
   cv.addEventListener('pointercancel', function (e) { endDrag(e, true); });
+  $('shapeBtn').addEventListener('click', function () { settings.shape = freeMode() ? 'box' : 'free'; saveSettings(); clearSel(); applyDrawMode(); });
 
   function cropSelection() {
     var rect = cv.getBoundingClientRect(), k = cv.width / rect.width;
@@ -282,7 +334,23 @@
     var w = Math.max(1, Math.min(cv.width - x, Math.round(sel.w * k)));
     var h = Math.max(1, Math.min(cv.height - y, Math.round(sel.h * k)));
     var t = document.createElement('canvas'); t.width = w; t.height = h;
-    t.getContext('2d').drawImage(cv, x, y, w, h, 0, 0, w, h);
+    var tc = t.getContext('2d');
+    if (sel.poly) {
+      /* 圈外变成白色；圈的边缘留一点余量，避免切到字 */
+      var m = document.createElement('canvas'); m.width = w; m.height = h;
+      var mc = m.getContext('2d');
+      mc.beginPath();
+      sel.poly.forEach(function (p, i) { var px = p.x * k - x, py = p.y * k - y; if (i) mc.lineTo(px, py); else mc.moveTo(px, py); });
+      mc.closePath(); mc.fillStyle = '#000'; mc.fill();
+      mc.lineWidth = 14 * k; mc.lineJoin = 'round'; mc.strokeStyle = '#000'; mc.stroke();
+      tc.drawImage(cv, x, y, w, h, 0, 0, w, h);
+      tc.globalCompositeOperation = 'destination-in'; tc.drawImage(m, 0, 0);
+      var o = document.createElement('canvas'); o.width = w; o.height = h;
+      var oc = o.getContext('2d'); oc.fillStyle = '#fff'; oc.fillRect(0, 0, w, h); oc.drawImage(t, 0, 0);
+      t = o;
+    } else {
+      tc.drawImage(cv, x, y, w, h, 0, 0, w, h);
+    }
     return new Promise(function (res) { t.toBlob(res, 'image/png'); });
   }
   async function regionToAsk() {
@@ -295,47 +363,40 @@
   }
 
   /* ================= 提问 ================= */
-  var SYSTEM = '你是一位耐心、直接的学习教练，学生在读英文资料和经济学等学科材料。用简体中文回答，不要使用 Markdown 符号（不要 #、*、表格、反引号），公式用文字或普通符号写。不要客套，不要重复题目。';
-  var MARK = /={3}\s*(WORDS|DATA)\s*={3}/i;
+  var SYSTEM = '你是一位耐心、直接的学习教练。学生是在日本留学的中国人，读英语、日语等外语材料，也学经济学、数学等学科。用简体中文回答，不要使用 Markdown 符号（不要 #、*、表格、反引号），公式用文字或普通符号写。不要客套，不要重复题目。';
+  var MARK = /={3}\s*(WORDS|DATA)\s*={3}/i; /* WORDS 是旧格式，兼容 */
   var JSON_TAIL = '最后另起一行写 ===MARKER=== ，紧接着给出一个 JSON，不要用代码块，不要在它后面再写别的话。';
 
-  function buildPrompt(mode, hasImage, typed, note) {
-    var intro, body;
-    if (mode === 'en') {
-      intro = hasImage ? '图片是我正在读的英语材料里框出的一块（可能是扫描页，也可能有手写）。' : '下面是我想问的英文内容或问题：\n' + typed;
-      body = [
-        '按下面的小标题回答，每个小标题单独成行：',
-        hasImage ? '原文：抄写图中的英文，最多 300 字。' : '原文：把我问的英文原样写一遍；只是一个单词就写这个单词。',
-        '翻译：通顺的中文翻译。',
-        '生词：列出我可能不会的单词或短语，每个一行，格式“单词 /音标/ 词性 在这里的中文意思”。最多 8 个，太简单的不要列。',
-        '句子分析：只有句子较长或有难点时才写，3 句以内讲清语法结构。',
-        JSON_TAIL.replace('MARKER', 'WORDS') + '格式：[{"term":"单词或短语","pos":"词性","meaning":"在这里的中文意思","example":"原文里含有它的短句"}]'
-      ].join('\n');
-    } else if (mode === 'sub') {
-      intro = hasImage ? '图片是我正在读的材料里框出的一块（文字、公式或图表都有可能），学科以经济学居多。' : '下面是我想问的内容：\n' + typed;
-      body = [
-        '按下面的小标题回答，每个小标题单独成行：',
-        hasImage ? '原文：抄写图中的关键内容，最多 300 字。' : '原文：把我问的内容原样写一遍。',
-        '通俗讲解：用白话讲明白它在说什么，先结论后原因，6 句以内。',
-        '举个例子：一个贴近生活的具体例子。',
-        '相关概念：2 到 4 个需要先懂的概念，每个一行，一句话。',
-        JSON_TAIL.replace('MARKER', 'WORDS') + '格式：[{"term":"概念名","pos":"","meaning":"一句话定义","example":"一个简短例子"}]'
-      ].join('\n');
-    } else if (mode === 'solve') {
-      intro = hasImage ? '图片里有一道题，还有我手写的解答（可能没写完，字迹可能潦草）。' : '下面是我的题目和我写的解答：\n' + typed;
-      body = [
-        '按下面的小标题回答，每个小标题单独成行：',
-        '题目：转写题目。',
-        '我的解答：逐行转写我写的内容，看不清的地方用 [?] 标出。如果我什么都没写，就写“（没有写）”。',
-        '诊断：判断我做到了哪一步，从哪一步开始卡住或出错，并说明原因。',
-        '接着做：从我卡住或出错的那一步开始往下讲，一步一步，每步说明为什么这样做。我已经做对的部分不要重讲。',
-        '要点：这道题用到的 2 到 4 个知识点。',
-        JSON_TAIL.replace('MARKER', 'DATA') + '格式：{"problem":"题目转写","my_work":"我的解答转写","status":"correct 或 incomplete 或 wrong","stuck_at":"卡住或出错的那一步，没有则为空","points":["知识点"]}'
-      ].join('\n');
-    } else {
-      intro = '图片里是手写或印刷的内容。';
-      body = '把它原样转写成文字，保持原来的换行；看不清的地方用 [?] 标出；公式用普通符号写；只输出转写结果，不要解释，不要加小标题。';
-    }
+  function buildPrompt(hasImage, typed, note) {
+    var intro = hasImage
+      ? '图片是我在学习资料上圈出的一块。可能是外语文字（英语、日语或别的语言）、题目、公式、图表，也可能带有我的手写（包括数学和经济学符号，字迹可能潦草、可能没写完）。'
+      : '下面是我想问的内容：\n' + typed;
+    var body = [
+      '先判断这一块属于哪一类，再按对应格式回答，只写对应的部分，每个小标题单独成行。',
+      '',
+      '【A. 外语文字（英语、日语、别的语言，单个单词也算）】',
+      '原文：抄写原文，日语保留汉字和假名，最多 300 字。',
+      '读音：只有日语等需要时才写，用假名，必要时加罗马音。',
+      '翻译：通顺的中文翻译。',
+      '生词：列出我可能不会的单词或短语，每个一行，格式“单词 /读音或音标/ 词性 在这里的中文意思”，最多 8 个，太简单的不要列。',
+      '句子分析：只有句子较长或有难点时才写，3 句以内讲清结构（日语要点出助词、活用、敬语）。',
+      '',
+      '【B. 题目，并且带有我手写的解答（含数学、经济学符号）】',
+      '题目：转写题目。',
+      '我的解答：逐行转写我手写的内容，公式用普通符号，看不清的地方用 [?]。如果我什么都没写，就写“（没有写）”。',
+      '诊断：判断我做到了哪一步，从哪一步开始卡住或出错，并说明原因。',
+      '接着做：从我卡住或出错的那一步开始往下讲，一步一步，每步说明为什么这样做。我已经做对的部分不要重讲。',
+      '要点：这道题用到的 2 到 4 个知识点。',
+      '',
+      '【C. 学科概念、文献段落、图表（不是单纯的外语查词，也没有我的解答）】',
+      '原文：抄写图中的关键内容，最多 300 字。',
+      '通俗讲解：用白话讲明白它在说什么，先结论后原因，6 句以内。',
+      '举个例子：一个贴近生活的具体例子。',
+      '相关概念：2 到 4 个需要先懂的概念，每个一行，一句话。',
+      '',
+      '如果同一块里既有外语又有学科内容，就把 A 的“原文、翻译、生词”和 C 的“通俗讲解”合在一起写。图里看不清就直接说看不清，不要猜。',
+      JSON_TAIL.replace('MARKER', 'DATA') + '格式：{"kind":"lang 或 solve 或 concept","lang":"外语的中文名，如 英语、日语、韩语、法语；不是外语则为空","words":[{"term":"单词、短语或概念","reading":"读音或音标，没有则为空","pos":"词性","meaning":"在这里的中文意思","example":"原文里含有它的短句"}],"solve":{"problem":"题目转写","my_work":"我的解答转写","status":"correct 或 incomplete 或 wrong","stuck_at":"卡住或出错的那一步，没有则为空","points":["知识点"]}}。words 只在 lang 或 concept 时填，solve 只在 solve 时填，没有的部分写空数组或 null。'
+    ].join('\n');
     var extra = note ? '\n\n我的补充问题：' + note + '\n请在上面的结构里回应这个问题。' : '';
     return intro + '\n' + body + extra;
   }
@@ -355,7 +416,7 @@
     return { visible: visibleOnly(full), kind: m[1].toUpperCase(), json: AI.parseJSON(full.slice(m.index + m[0].length)) };
   }
 
-  var LABELS = /^(原文|翻译|生词|句子分析|通俗讲解|举个例子|相关概念|题目|我的解答|诊断|接着做|要点)\s*[：:]\s*(.*)$/;
+  var LABELS = /^(原文|读音|翻译|生词|句子分析|通俗讲解|举个例子|相关概念|题目|我的解答|诊断|接着做|要点)\s*[：:]\s*(.*)$/;
   function renderAnswer(node, text) {
     node.textContent = '';
     text.split('\n').forEach(function (line) {
@@ -375,9 +436,9 @@
     var box = el('div', 'empty');
     box.appendChild(el('strong', null, '还没有提问。'));
     var ul = el('ul');
-    ['英语查词、学科讲解：圈住不懂的词或段落，松手就讲解，生词自动进生词本。',
-     '解题接力：把题目和你写了一半的解答一起圈上，从你卡住的那一步接着讲，没做对的会进错题本。',
-     '在 GoodNotes 里圈选并拷贝，回到这里直接粘贴，也会马上提问。'].forEach(function (x) { ul.appendChild(el('li', null, x)); });
+    ['圈住外语（英语、日语等），松手就查词、翻译，生词自动进生词本。',
+     '圈住学科内容，白话讲解；圈住题目和你写了一半的解答，从卡住的那一步接着讲，没做对的进错题本。',
+     '不用选模式，我自己判断。也可以在下面直接打字问。'].forEach(function (x) { ul.appendChild(el('li', null, x)); });
     box.appendChild(ul); t.appendChild(box);
   }
   function userCard(blob, text, caption) {
@@ -399,13 +460,7 @@
     $('newBtn').hidden = !has;
     $('askIn').placeholder = has ? '继续追问，或输入新的词' : '输入单词或问题';
   }
-  function syncModeUi() {
-    document.querySelectorAll('#modes button').forEach(function (b) {
-      b.setAttribute('aria-pressed', b.getAttribute('data-mode') === settings.mode ? 'true' : 'false');
-    });
-    $('strong').checked = !!settings.strong;
-    $('strong').disabled = settings.mode === 'solve' || settings.mode === 'ocr';
-  }
+  function syncModeUi() { $('strong').checked = !!settings.strong; }
 
   async function run(messages, tier, body) {
     ctl = new AbortController(); setBusy(true);
@@ -428,16 +483,16 @@
   async function ask(o) {
     if (!AI.hasKey(settings)) { toast('先到“设置”里填 AI 密钥。'); showView('settings'); return; }
     if (busy && ctl) ctl.abort();
-    var mode = o.mode || settings.mode, typed = (o.text || '').trim();
-    if (mode === 'ocr' && !o.blob) { toast('手写转文字需要框选或选一张图。'); return; }
+    var typed = (o.text || '').trim();
     var img = null;
     if (o.blob) {
-      try { img = await AI.prepareImage(o.blob, (mode === 'solve' || mode === 'ocr') ? 2000 : 1600); }
+      try { img = await AI.prepareImage(o.blob, o.strong ? 2000 : 1600); }
       catch (e) { toast('这张图读不了：' + errMsg(e)); return; }
     }
-    var tier = (mode === 'solve' || mode === 'ocr' || settings.strong) ? 'strong' : 'fast';
-    var prompt = buildPrompt(mode, !!img, typed, o.note || '');
-    topic = { mode: mode, tier: tier, prompt: prompt, img: img && img.blob, done: false,
+    /* 带手写的内容用强模型读，更准 */
+    var tier = (o.strong || settings.strong) ? 'strong' : 'fast';
+    var prompt = buildPrompt(!!img, typed, o.note || '');
+    topic = { tier: tier, prompt: prompt, img: img && img.blob, done: false,
       messages: [{ role: 'user', text: prompt, images: img ? [{ mime: img.mime, b64: img.b64 }] : [] }] };
     updateAskUi();
 
@@ -452,19 +507,25 @@
     topic.messages.push({ role: 'assistant', text: out.visible });
     topic.done = true; updateAskUi();
 
+    var data = (out.json && !Array.isArray(out.json) && typeof out.json === 'object') ? out.json : null;
+    var words = Array.isArray(out.json) ? out.json : (data && Array.isArray(data.words) ? data.words : []);
+    var kind = data && /^(lang|solve|concept)$/.test(data.kind) ? data.kind : (words.length ? 'lang' : null);
+    var lang = data && typeof data.lang === 'string' ? data.lang.trim().slice(0, 12) : '';
+    var logMode = kind === 'solve' ? 'solve' : kind === 'concept' ? 'sub' : 'en';
+
     var ctxLine = '';
     var mm = out.visible.match(/(?:^|\n)(?:原文|题目)\s*[：:]\s*(.+)/);
     if (mm) ctxLine = mm[1].trim();
-    var title = ctxLine || typed || (mode === 'ocr' ? '手写转文字' : '图片提问');
+    var title = ctxLine || typed || '图片提问';
 
     var logId = DB.uid();
     var thumb = null;
     if (img) { try { thumb = (await AI.prepareImage(img.blob, 420)).blob; } catch (e) {} }
-    DB.put({ id: logId, type: 'log', ts: Date.now(), day: DB.dayKey(), mode: mode, title: title.slice(0, 120), text: out.visible, img: thumb }).catch(function () {});
+    DB.put({ id: logId, type: 'log', ts: Date.now(), day: DB.dayKey(), mode: logMode, title: title.slice(0, 120), text: out.visible, img: thumb }).catch(function () {});
 
-    addTools(card, mode);
-    if (mode === 'en' || mode === 'sub') await afterWords(card, Array.isArray(out.json) ? out.json : [], ctxLine, mode);
-    else if (mode === 'solve') await afterSolve(card, out.json && !Array.isArray(out.json) ? out.json : null, out.visible, img);
+    addTools(card);
+    if (kind === 'solve') await afterSolve(card, data && data.solve && typeof data.solve === 'object' ? data.solve : null, out.visible, img);
+    else if (words.length) await afterWords(card, words, ctxLine, kind === 'concept' ? 'sub' : 'en', lang);
   }
 
   async function askFollow(q) {
@@ -474,7 +535,7 @@
     var card = el('div', 'msg a'), body = el('div', 'body');
     card.appendChild(body); t.appendChild(card);
     card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    var msgs = topic.messages.concat([{ role: 'user', text: q + '\n\n（简洁回答，不要用 Markdown 符号，不要输出 ===WORDS=== 或 JSON。）' }]);
+    var msgs = topic.messages.concat([{ role: 'user', text: q + '\n\n（简洁回答，不要用 Markdown 符号，不要输出 ===DATA=== 或 JSON。）' }]);
     var full = await run(msgs, topic.tier, body);
     if (full == null) return;
     topic.messages.push({ role: 'user', text: q });
@@ -482,13 +543,8 @@
     if (topic.messages.length > 14) topic.messages = [topic.messages[0], topic.messages[1]].concat(topic.messages.slice(-8));
   }
 
-  function addTools(card, mode) {
+  function addTools(card) {
     var row = el('div', 'rowtools');
-    if (mode === 'ocr') {
-      var b0 = el('button', 'btn small', '复制文字'); b0.type = 'button';
-      b0.addEventListener('click', function () { copyText(topic.messages[1].text); });
-      row.appendChild(b0);
-    }
     var b1 = el('button', 'btn small', '复制提示词'); b1.type = 'button';
     b1.addEventListener('click', function () { copyText(topic.prompt.replace(/最后另起一行写[\s\S]*$/, '').trim()); });
     row.appendChild(b1);
@@ -510,7 +566,7 @@
     card.appendChild(row);
   }
 
-  async function saveWords(words, context, kind) {
+  async function saveWords(words, context, kind, lang) {
     var added = 0, dup = 0, failed = 0;
     for (var i = 0; i < words.length; i++) {
       var w = words[i];
@@ -521,14 +577,14 @@
         var old = await DB.get(id);
         if (old) { dup++; continue; }
         await DB.put({ id: id, type: 'word', ts: Date.now(), day: DB.dayKey(), kind: kind, term: term,
-          pos: String(w.pos || '').slice(0, 20), meaning: String(w.meaning || '').slice(0, 300), example: String(w.example || '').slice(0, 300),
+          reading: String(w.reading || '').slice(0, 60), lang: lang || '', pos: String(w.pos || '').slice(0, 20), meaning: String(w.meaning || '').slice(0, 300), example: String(w.example || '').slice(0, 300),
           context: (context || '').slice(0, 160) });
         added++;
       } catch (e) { failed++; }
     }
     return { added: added, dup: dup, failed: failed };
   }
-  async function afterWords(card, words, ctxLine, kind) {
+  async function afterWords(card, words, ctxLine, kind, lang) {
     words = words.filter(function (w) { return w && typeof w.term === 'string' && w.term.trim(); }).slice(0, 12);
     if (!words.length) return;
     var row = el('div', 'rowtools');
@@ -536,14 +592,14 @@
     words.forEach(function (w) { row.appendChild(el('span', 'chip', String(w.term).slice(0, 40))); });
     card.appendChild(row);
     if (settings.autoWord) {
-      var r = await saveWords(words, ctxLine, kind);
+      var r = await saveWords(words, ctxLine, kind, lang);
       var msg = '已记入生词本 ' + r.added + ' 个' + (r.dup ? '，' + r.dup + ' 个本来就有' : '') + (r.failed ? '，' + r.failed + ' 个没存上' : '');
       row.appendChild(el('span', r.failed ? 'err' : 'ok', msg));
     } else {
       var b = el('button', 'btn small', '记入生词本'); b.type = 'button';
       b.addEventListener('click', async function () {
         b.disabled = true;
-        var r2 = await saveWords(words, ctxLine, kind);
+        var r2 = await saveWords(words, ctxLine, kind, lang);
         b.replaceWith(el('span', 'ok', '已记入 ' + r2.added + ' 个'));
       });
       row.appendChild(b);
@@ -602,7 +658,7 @@
       var r = el('div', 'logrow');
       if (x.img) { var im = el('img'); im.alt = ''; im.src = URL.createObjectURL(x.img); im.onload = function () { URL.revokeObjectURL(im.src); }; r.appendChild(im); }
       var t = el('div', 'txt');
-      t.appendChild(el('div', 'meta', fmtTime(x.ts) + ' · ' + ({ en: '英语查词', sub: '学科讲解', solve: '解题接力', ocr: '手写转文字' }[x.mode] || x.mode)));
+      t.appendChild(el('div', 'meta', fmtTime(x.ts) + ' · ' + ({ en: '外语查词', sub: '学科讲解', solve: '解题接力' }[x.mode] || '提问')));
       t.appendChild(el('div', null, x.title));
       r.appendChild(t); list.appendChild(r);
     });
@@ -731,11 +787,12 @@
 
   function renderWords(list) {
     var rows = cache.word.filter(function (x) { return match(x, ['term', 'meaning', 'example', 'context']); });
-    if (!rows.length) { list.appendChild(emptyBox(cache.word.length ? '没有符合的词条。' : '生词本还是空的。在“阅读”里圈一个词，讲解完它会自动出现在这里。')); return; }
+    if (!rows.length) { list.appendChild(emptyBox(cache.word.length ? '没有符合的词条。' : '生词本还是空的。在文档里圈一个词问 AI，它会自动出现在这里。')); return; }
     rows.forEach(function (x) {
       var card = el('article', 'entry'), head = el('div');
-      head.appendChild(el('span', 'kind', x.kind === 'sub' ? '概念' : '英语'));
+      head.appendChild(el('span', 'kind', x.kind === 'sub' ? '概念' : (x.lang || '英语')));
       head.appendChild(el('span', 'term', x.term));
+      if (x.reading) head.appendChild(el('span', 'pos', x.reading));
       if (x.pos) head.appendChild(el('span', 'pos', x.pos));
       card.appendChild(head);
       if (x.meaning) card.appendChild(el('div', null, x.meaning));
@@ -748,7 +805,7 @@
 
   function renderWrongs(list) {
     var rows = cache.wrong.filter(function (x) { return match(x, ['problem', 'stuck', 'points', 'mywork']); });
-    if (!rows.length) { list.appendChild(emptyBox(cache.wrong.length ? '没有符合的错题。' : '错题本还是空的。用“解题接力”圈一道题和你的解答，没做对的会自动进来。')); return; }
+    if (!rows.length) { list.appendChild(emptyBox(cache.wrong.length ? '没有符合的错题。' : '错题本还是空的。圈住一道题和你手写的解答问 AI，没做对的会自动进来。')); return; }
     rows.forEach(function (x) {
       var card = el('article', 'entry' + (x.mastered ? ' mastered' : ''));
       var head = el('div', 'foot');
@@ -826,14 +883,14 @@
     var rows = cache.word.filter(function (x) { return match(x, ['term', 'meaning', 'example', 'context']); });
     if (!rows.length) { toast('没有可以导出的词条。'); return; }
     if (fmt === 'csv') {
-      var lines = [['词条', '词性', '释义', '例句', '出处', '类别', '日期'].map(csvCell).join(',')];
-      rows.forEach(function (x) { lines.push([x.term, x.pos, x.meaning, x.example, x.context, x.kind === 'sub' ? '概念' : '英语', fmtDay(x.ts)].map(csvCell).join(',')); });
+      var lines = [['词条', '读音', '词性', '释义', '例句', '出处', '类别', '日期'].map(csvCell).join(',')];
+      rows.forEach(function (x) { lines.push([x.term, x.reading || '', x.pos, x.meaning, x.example, x.context, x.kind === 'sub' ? '概念' : (x.lang || '英语'), fmtDay(x.ts)].map(csvCell).join(',')); });
       saveFile('圈问-生词本.csv', '﻿' + lines.join('\r\n'), 'text/csv');
     } else {
       var clean = function (s) { return String(s == null ? '' : s).replace(/[\t\r\n]+/g, ' '); };
       var out = ['#separator:tab', '#html:true'];
       rows.forEach(function (x) {
-        out.push(clean(x.term) + (x.pos ? ' (' + clean(x.pos) + ')' : '') + '\t' + clean(x.meaning) + (x.example ? '<br><i>' + clean(x.example) + '</i>' : ''));
+        out.push(clean(x.term) + (x.reading ? ' ' + clean(x.reading) : '') + (x.pos ? ' (' + clean(x.pos) + ')' : '') + '\t' + clean(x.meaning) + (x.example ? '<br><i>' + clean(x.example) + '</i>' : ''));
       });
       saveFile('圈问-Anki.txt', out.join('\n'), 'text/plain');
     }
@@ -945,9 +1002,6 @@
   })();
 
   /* ================= 接线 ================= */
-  document.querySelectorAll('#modes button').forEach(function (b) {
-    b.addEventListener('click', function () { settings.mode = b.getAttribute('data-mode'); saveSettings(); syncModeUi(); });
-  });
   $('strong').addEventListener('change', function () { settings.strong = $('strong').checked; saveSettings(); });
   $('drawBtn').addEventListener('click', function () { settings.draw = !settings.draw; saveSettings(); applyDrawMode(); });
   $('fileIn').addEventListener('change', function (e) { var f = e.target.files && e.target.files[0]; e.target.value = ''; openFile(f); });
@@ -988,9 +1042,10 @@
       if (items[i].kind === 'file' && /^image\//.test(items[i].type)) {
         var f = items[i].getAsFile();
         if (f) {
-          if (currentView === 'notes') return; /* 笔记里的粘贴由 notes.js 处理 */
+          if (currentView === 'notes' && window.QWNotes && window.QWNotes.canInsert()) return; /* 文档里的粘贴由 notes.js 处理 */
           e.preventDefault();
-          if (currentView !== 'read') showView('read');
+          if (currentView !== 'notes') showView('notes');
+          if (window.QWNotes && window.QWNotes.openAI) window.QWNotes.openAI();
           var note = $('askIn').value.trim(); $('askIn').value = '';
           ask({ blob: f, note: note });
           return;
@@ -1017,6 +1072,6 @@
   src.bitmap = makeSample();
   $('dayIn').value = DB.dayKey();
   syncModeUi(); applyDrawMode(); emptyThread(); updateAskUi(); updateBanner();
-  renderPage();
+  showView('notes');
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
 })();

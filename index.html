@@ -26,11 +26,11 @@
 <div id="banner" class="banner" hidden></div>
 
 <!-- 阅读 -->
-<main id="view-read" class="view">
+<main id="view-read" class="view" hidden aria-hidden="true">
   <div class="reader" id="readerGrid">
     <section class="pane" aria-label="页面">
       <div class="toolbar">
-        <label class="btn" for="fileIn">打开 PDF / 图片</label>
+        <label class="btn" for="fileIn" title="打开 PDF 或图片">打开</label>
         <input id="fileIn" type="file" accept="application/pdf,image/*" hidden>
         <div class="grow"><span class="pageinfo" id="pageInfo">示例页</span></div>
         <span class="step">
@@ -42,54 +42,30 @@
           <span class="zoomval" id="zoomVal">100%</span>
           <button class="btn icon" id="zoomIn" type="button" aria-label="放大">＋</button>
         </span>
-        <button class="btn" id="drawBtn" type="button" aria-pressed="true">框选</button>
+        <button class="btn" id="shapeBtn" type="button">圈选</button>
+        <button class="btn" id="drawBtn" type="button" aria-pressed="true">选取</button>
       </div>
       <div class="stage" id="stage">
         <div class="sheet" id="sheet">
           <canvas id="cv" width="10" height="10" aria-label="当前页面，可框选"></canvas>
+          <canvas id="selC" aria-hidden="true"></canvas>
           <div class="selbox" id="selBox" hidden></div>
         </div>
       </div>
       <p class="hint" id="hint"></p>
     </section>
 
-    <section class="pane answer-pane" id="answerPane" aria-label="讲解">
-      <div class="modes" id="modes" role="group" aria-label="提问方式">
-        <button type="button" data-mode="en" aria-pressed="true">
-          <b>英语查词</b><span>原文 · 翻译 · 生词</span></button>
-        <button type="button" data-mode="sub" aria-pressed="false">
-          <b>学科讲解</b><span>白话讲 · 举例 · 概念</span></button>
-        <button type="button" data-mode="solve" aria-pressed="false">
-          <b>解题接力</b><span>圈题和我写的，从卡住处讲</span></button>
-        <button type="button" data-mode="ocr" aria-pressed="false">
-          <b>手写转文字</b><span>只转写，不解释</span></button>
-      </div>
-      <div class="modebar">
-        <label class="check" for="strong"><input type="checkbox" id="strong">用强模型（更准，更费额度）</label>
-      </div>
-
-      <div class="thread" id="thread" aria-live="polite"></div>
-
-      <form class="askbar" id="askForm" autocomplete="off">
-        <input type="text" id="askIn" placeholder="输入单词或问题" aria-label="输入单词或问题">
-        <button class="btn" id="imgBtn" type="button">选图</button>
-        <input id="imgIn" type="file" accept="image/*" hidden>
-        <button class="btn primary" id="sendBtn" type="submit">问</button>
-        <button class="btn" id="stopBtn" type="button" hidden>停止</button>
-        <button class="btn newq" id="newBtn" type="button" hidden>当作新问题问</button>
-      </form>
-    </section>
   </div>
 </main>
 
 <!-- 笔记 -->
-<main id="view-notes" class="view" hidden>
+<main id="view-notes" class="view">
   <div id="nList">
     <div class="page-head">
-      <h2>笔记</h2>
+      <h2>文档</h2>
       <div class="actions tight">
-        <button class="btn primary" id="nbNew" type="button">新建笔记本</button>
-        <label class="btn" for="nbImport">导入 PDF / 图片</label>
+        <label class="btn primary" for="nbImport">导入 PDF / 图片</label>
+        <button class="btn" id="nbNew" type="button">新建空白笔记本</button>
         <input id="nbImport" type="file" accept="application/pdf,image/*" hidden>
       </div>
     </div>
@@ -98,16 +74,17 @@
 
   <div id="nEditor" class="editor" hidden>
     <div class="ed-head">
-      <button class="btn small" id="edBack" type="button">‹ 笔记本</button>
+      <button class="btn small" id="edBack" type="button">‹ 文档</button>
       <button class="ed-title" id="edTitle" type="button">无标题</button>
       <span class="grow"></span>
-      <button class="btn small" id="edPages" type="button">1 / 1</button>
+      <button class="btn small" id="edPages" type="button" aria-pressed="false" aria-label="目录">目录 1 / 1</button>
       <button class="btn small" id="edExport" type="button">导出</button>
-      <button class="btn small" id="edAI" type="button" aria-pressed="false">AI</button>
+      <button class="btn small hot" id="edAI" type="button" aria-pressed="false">✨ AI</button>
       <button class="btn small" id="edFocus" type="button" aria-pressed="false">专注</button>
     </div>
     <div class="ed-tools" id="nTools">
       <div class="tg" role="group" aria-label="工具">
+        <button type="button" data-tool="read" aria-pressed="false">浏览</button>
         <button type="button" data-tool="pen" aria-pressed="true">笔</button>
         <button type="button" data-tool="hl" aria-pressed="false">荧光笔</button>
         <button type="button" data-tool="eraser" aria-pressed="false">橡皮</button>
@@ -124,12 +101,7 @@
         <button type="button" id="nPaste" hidden>粘贴</button>
       </div>
       <div class="tg">
-        <button type="button" id="nZoomOut" aria-label="缩小">−</button>
-        <button type="button" id="nZoomFit" class="zv" aria-label="适应宽度">100%</button>
-        <button type="button" id="nZoomIn" aria-label="放大">＋</button>
-      </div>
-      <div class="tg">
-        <button type="button" id="nFinger" aria-pressed="false">手指写字</button>
+        <button type="button" id="nFinger" aria-pressed="false">防误触</button>
       </div>
     </div>
     <div class="ed-opts" id="nOpts"></div>
@@ -144,9 +116,34 @@
           <div class="selbar" id="objBar" hidden></div>
         </div>
       </div>
-      <aside class="drawer" id="nDrawer" hidden>
-        <div class="drawer-head"><b>AI 讲解</b><button class="btn small" id="drawerClose" type="button">收起</button></div>
-        <div id="nDrawerBody"></div>
+      <aside class="toc" id="nToc" hidden aria-label="目录">
+        <div class="toc-head"><b>目录</b><button class="btn small" id="tocClose" type="button">关闭</button></div>
+        <div class="toc-jump"><input type="number" id="tocGo" inputmode="numeric" min="1" placeholder="跳到第几页"><button class="btn small" id="tocGoBtn" type="button">跳转</button></div>
+        <button class="btn small" id="tocManage" type="button">管理页面（添加、复制、删除）</button>
+        <div id="tocBody"></div>
+      </aside>
+      <aside class="drawer" id="nDrawer" hidden aria-label="AI 助手">
+        <div class="drawer-head" id="drawerHead"><b>✨ AI 助手</b><span class="grow"></span><button class="btn small" id="drawerClose" type="button">收起</button></div>
+        <div id="nDrawerBody">
+    <section class="pane answer-pane" id="answerPane" aria-label="讲解">
+        <div class="modebar">
+          <label class="check" for="strong"><input type="checkbox" id="strong">更准模式（更费额度；圈到手写时我会自动用）</label>
+        </div>
+  
+        <div class="thread" id="thread" aria-live="polite"></div>
+  
+        <form class="askbar" id="askForm" autocomplete="off">
+          <input type="text" id="askIn" placeholder="输入单词或问题" aria-label="输入单词或问题">
+          <button class="btn" id="imgBtn" type="button">选图</button>
+          <input id="imgIn" type="file" accept="image/*" hidden>
+          <button class="btn primary" id="sendBtn" type="submit">问</button>
+          <button class="btn" id="stopBtn" type="button" hidden>停止</button>
+          <button class="btn newq" id="newBtn" type="button" hidden>当作新问题问</button>
+        </form>
+      </section>
+  </div>
+        <span class="rz rz-l" id="rzL" aria-label="拖动调整大小"></span>
+        <span class="rz rz-r" id="rzR" aria-label="拖动调整大小"></span>
       </aside>
     </div>
   </div>
@@ -234,8 +231,7 @@
 </main>
 
 <nav class="tabbar" id="tabbar" aria-label="主菜单">
-  <button type="button" data-view="read" aria-current="page"><i>圈</i>阅读</button>
-  <button type="button" data-view="notes"><i>笔</i>笔记</button>
+  <button type="button" data-view="notes" aria-current="page"><i>文</i>文档</button>
   <button type="button" data-view="today"><i>日</i>总结</button>
   <button type="button" data-view="book"><i>复</i>复习</button>
   <button type="button" data-view="settings"><i>设</i>设置</button>

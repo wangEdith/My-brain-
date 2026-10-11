@@ -15,17 +15,19 @@
   var PEN_SIZES = [2, 3.6, 6, 10], HL_SIZES = [16, 26, 38], ER_SIZES = [10, 22, 40], TEXT_SIZES = [22, 30, 42];
   var TPLS = [['blank', '空白'], ['lined', '横线'], ['grid', '方格'], ['dots', '点阵']];
   var SPINES = ['#2346c8', '#c2410c', '#15803d', '#7c3aed', '#be123c', '#0e7490'];
-  var TOOLS = ['pen', 'hl', 'eraser', 'lasso', 'text', 'sticky', 'move'];
+  var TOOLS = ['read', 'pen', 'hl', 'eraser', 'lasso', 'text', 'sticky', 'move'];
 
   var S = {
     nb: null, pages: [], idx: 0, page: null,
     tool: 'pen',
     cfg: { pen: { color: COLORS[0], size: 1 }, hl: { color: HL_COLORS[0], size: 1 }, eraser: { size: 1 }, text: { color: COLORS[0], size: 1 }, sticky: { color: STICKY[0] } },
     zoom: 1, s: 1, dpr: 1, bgTok: 0,
-    fingerDraw: false, penSeen: false,
+    inputMode: 'auto', penSeen: false,
     history: [], future: [], dirty: false, saveT: 0, thumbT: 0, thumbPending: false,
     sel: null, selObj: null, clip: null
   };
+  try { var ip = JSON.parse(localStorage.getItem('quanwen.input') || '{}'); if (/^(auto|pen|finger)$/.test(ip.mode)) S.inputMode = ip.mode; S.penSeen = !!ip.penSeen; } catch (e) {}
+  function saveInput() { try { localStorage.setItem('quanwen.input', JSON.stringify({ mode: S.inputMode, penSeen: S.penSeen })); } catch (e) {} }
   var cur = null, rafT = 0;
   var live = $('liveC'), stage = $('nStage'), wrap = $('pageWrap'), objsLayer = $('objs');
 
@@ -241,7 +243,6 @@
       c.style.width = cssW + 'px'; c.style.height = cssH + 'px';
     });
     S.dpr = $('bgC').width / cssW;
-    $('nZoomFit').textContent = Math.round(S.zoom * 100) + '%';
     drawBg(); redrawInk(); buildObjects(); paintLive(); updateSelBar();
   }
   async function drawBg() {
@@ -267,13 +268,14 @@
     var wr = wrap.getBoundingClientRect(), sr = stage.getBoundingClientRect();
     var fx = focal ? focal.x : sr.left + sr.width / 2, fy = focal ? focal.y : sr.top + sr.height / 2;
     var px = (fx - wr.left) / S.s, py = (fy - wr.top) / S.s;
-    S.zoom = clamp(z, 0.5, 3); layout();
+    S.zoom = clamp(z, 0.5, 3); layout(); showHud(S.zoom);
     var wr2 = wrap.getBoundingClientRect();
     stage.scrollLeft += (wr2.left + px * S.s) - fx; stage.scrollTop += (wr2.top + py * S.s) - fy;
   }
-  $('nZoomIn').addEventListener('click', function () { setZoom(S.zoom * 1.25); });
-  $('nZoomOut').addEventListener('click', function () { setZoom(S.zoom / 1.25); });
-  $('nZoomFit').addEventListener('click', function () { S.zoom = 1; layout(); stage.scrollLeft = 0; });
+  /* 缩放比例只在捏合时短暂显示，界面上没有放大缩小按钮 */
+  var hud = document.createElement('div'); hud.className = 'zoomhud'; hud.hidden = true; document.body.appendChild(hud);
+  var hudT = 0;
+  function showHud(z) { hud.textContent = Math.round(z * 100) + '%'; hud.hidden = false; clearTimeout(hudT); hudT = setTimeout(function () { hud.hidden = true; }, 900); }
   stage.addEventListener('wheel', function (e) {
     if (!e.ctrlKey) return;
     e.preventDefault(); setZoom(S.zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08), { x: e.clientX, y: e.clientY });
@@ -293,7 +295,7 @@
     if (!pinch || e.touches.length !== 2) return;
     e.preventDefault();
     pinch.r = clamp(touchDist(e.touches) / pinch.d, 0.4, 4);
-    wrap.style.transform = 'scale(' + pinch.r + ')';
+    wrap.style.transform = 'scale(' + pinch.r + ')'; showHud(clamp(pinch.z * pinch.r, 0.5, 3));
   }, { passive: false });
   function endPinch(e) {
     if (!pinch || e.touches.length >= 2) return;
@@ -301,23 +303,34 @@
     wrap.style.transform = ''; wrap.style.transformOrigin = '0 0';
     if (Math.abs(p.r - 1) > 0.02) setZoom(p.z * p.r, { x: p.cx, y: p.cy });
   }
-  stage.addEventListener('touchend', endPinch);
+  var lastTap = null;
+  stage.addEventListener('touchend', function (e) {
+    endPinch(e);
+    if (e.touches.length || e.changedTouches.length !== 1 || !S.page) return;
+    var t = e.changedTouches[0], now = Date.now();
+    var canToggle = S.tool === 'read' || (!fingerOK() && /^(pen|hl|eraser|lasso)$/.test(S.tool));
+    if (canToggle && lastTap && now - lastTap.t < 320 && Math.hypot(t.clientX - lastTap.x, t.clientY - lastTap.y) < 30) {
+      lastTap = null; setZoom(S.zoom > 1.05 ? 1 : 2, { x: t.clientX, y: t.clientY });
+    } else lastTap = { t: now, x: t.clientX, y: t.clientY };
+  });
   stage.addEventListener('touchcancel', endPinch);
 
   /* ================= 工具与选项 ================= */
-  function fingerOK() { return S.fingerDraw || !S.penSeen; }
+  /* 防误触：auto 用过 Apple Pencil 之后手指不再写字；pen 只用笔；finger 手指也能写 */
+  function fingerOK() { return S.inputMode === 'finger' || (S.inputMode === 'auto' && !S.penSeen); }
   function updateTouchAction() {
     var draws = S.tool === 'pen' || S.tool === 'hl' || S.tool === 'eraser' || S.tool === 'lasso';
     live.style.touchAction = (draws && fingerOK()) ? 'none' : 'pan-x pan-y';
   }
   function updateFingerBtn() {
-    var b = $('nFinger');
-    b.setAttribute('aria-pressed', fingerOK() ? 'true' : 'false');
-    b.textContent = S.penSeen ? (S.fingerDraw ? '手指写字：开' : '手指写字：关') : '手指写字';
-    b.title = S.penSeen ? '检测到 Apple Pencil，默认只用笔写字，手指用来滚动。点这里可以让手指也写字。' : '没有检测到 Apple Pencil，手指可以写字。';
+    var b = $('nFinger'), blocked = !fingerOK();
+    b.setAttribute('aria-pressed', blocked ? 'true' : 'false');
+    b.textContent = S.inputMode === 'pen' ? '防误触：只用笔' : S.inputMode === 'finger' ? '防误触：关' : (S.penSeen ? '防误触：已开' : '防误触：自动');
+    b.title = blocked ? '手指只能滚动和双指缩放，不会写字，只有 Apple Pencil 能写。点一下切换。'
+      : '现在手指也能写字。用 Apple Pencil 写过一次后会自动开启防误触。点一下切换。';
   }
   function setTool(t) {
-    S.tool = t;
+    S.tool = t; if (S.nb) S.nb.tool = t;
     document.querySelectorAll('#nTools [data-tool]').forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-tool') === t ? 'true' : 'false'); });
     TOOLS.forEach(function (x) { wrap.classList.toggle('tool-' + x, x === t); });
     if (t !== 'lasso') { S.sel = null; $('selBar').hidden = true; }
@@ -329,7 +342,11 @@
   });
   $('nUndo').addEventListener('click', undo);
   $('nRedo').addEventListener('click', redo);
-  $('nFinger').addEventListener('click', function () { S.fingerDraw = !S.fingerDraw; if (!S.penSeen) S.penSeen = true; updateTouchAction(); updateFingerBtn(); });
+  $('nFinger').addEventListener('click', function () {
+    S.inputMode = S.inputMode === 'auto' ? 'pen' : S.inputMode === 'pen' ? 'finger' : 'auto';
+    saveInput(); updateTouchAction(); updateFingerBtn();
+    Q.toast(S.inputMode === 'pen' ? '防误触：只用 Apple Pencil 写字，手指只滚动和缩放。' : S.inputMode === 'finger' ? '防误触已关闭：手指也能写字。' : '防误触：自动。用 Apple Pencil 写过之后，手指就不再写字。');
+  });
 
   function swatches(list, get, set) {
     var g = el('span', 'grp');
@@ -518,7 +535,7 @@
       o.appendChild(sizeButtons(ER_SIZES, function () { return c.eraser.size; }, function (v) { c.eraser.size = v; }, function (v) { return Math.round(v / 2 + 6); }));
       o.appendChild(el('span', 'tip', '在笔迹上划过就擦掉整条笔画'));
     } else if (t === 'lasso') {
-      o.appendChild(el('span', 'tip', '圈住要选的内容：拖动、复制、变色、删除，或直接问 AI。圈在 PDF 文字上也能问。'));
+      o.appendChild(el('span', 'tip', '圈住要问的内容（外语、概念，或者题目加你手写的解答），松手点“问 AI”。圈在 PDF 文字上也行，也能拖动、复制、删除。'));
     } else if (t === 'text') {
       o.appendChild(swatches(COLORS, function () { return c.text.color; }, function (v) { c.text.color = v; }));
       o.appendChild(customColor(function () { return c.text.color; }, function (v) { c.text.color = v; }, '文字的颜色'));
@@ -533,6 +550,8 @@
       o.appendChild(swatches(STICKY, function () { return c.sticky.color; }, function (v) { c.sticky.color = v; }));
       o.appendChild(customColor(function () { return c.sticky.color; }, function (v) { c.sticky.color = v; }, '便利贴的颜色'));
       o.appendChild(el('span', 'tip', '点页面空白处添加便利贴'));
+    } else if (t === 'read') {
+      o.appendChild(el('span', 'tip', '浏览：只滚动和双指缩放，不会画上任何东西，适合读。要圈起来问 AI，换到“套索”。双击可以放大或还原。'));
     } else if (t === 'move') {
       o.appendChild(el('span', 'tip', '点选图片、文字、便利贴后拖动；右下角圆点可以缩放。'));
     }
@@ -586,7 +605,12 @@
   function inBBox(pt, b) { return pt.x >= b.x && pt.x <= b.x + b.w && pt.y >= b.y && pt.y <= b.y + b.h; }
 
   live.addEventListener('pointerdown', function (e) {
-    if (e.pointerType === 'pen' && !S.penSeen) { S.penSeen = true; updateTouchAction(); updateFingerBtn(); }
+    if (e.pointerType === 'pen' && !S.penSeen) {
+      S.penSeen = true; saveInput(); updateTouchAction(); updateFingerBtn();
+      if (S.inputMode === 'auto') Q.toast('检测到 Apple Pencil：以后手指只能滚动和缩放，不会写字。可以在工具栏“防误触”里改。');
+    }
+    /* 手掌先碰到屏幕、笔后落下：丢掉手掌的笔画，改用笔 */
+    if (e.pointerType === 'pen' && cur && cur.touch) { cur = null; redrawInk(); paintLive(); }
     if (e.pointerType === 'touch' && !fingerOK()) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (cur || !S.page) return;
@@ -778,7 +802,7 @@
     var bar = $('selBar');
     if (!S.sel || (cur && cur.kind === 'move')) { bar.hidden = true; return; }
     bar.textContent = '';
-    bar.appendChild(barBtn('问 AI', 'hot', function () { showAskMenu(); }));
+    bar.appendChild(barBtn('问 AI', 'hot', function () { askSel(); }));
     if (!S.sel.region) {
       bar.appendChild(barBtn('复制', '', copySelection));
       bar.appendChild(barBtn('变色', '', recolorSelection));
@@ -787,15 +811,7 @@
     bar.appendChild(barBtn('取消', '', clearSel));
     var b = S.sel.bbox; placeBar(bar, b.x, b.y, b.w, b.h);
   }
-  function showAskMenu() {
-    var bar = $('selBar'); bar.textContent = '';
-    [['查词', 'en'], ['讲解', 'sub'], ['解题接力', 'solve'], ['转文字', 'ocr']].forEach(function (m) {
-      bar.appendChild(barBtn(m[0], m[1] === 'solve' ? 'hot' : '', function () { askSel(m[1]); }));
-    });
-    bar.appendChild(barBtn('‹', '', updateSelBar));
-    var b = S.sel.bbox; placeBar(bar, b.x, b.y, b.w, b.h);
-  }
-  async function askSel(mode) {
+  async function askSel() {
     var b = S.sel.bbox, pad = 18;
     var x = Math.max(0, b.x - pad), y = Math.max(0, b.y - pad);
     var w = Math.min(PW - x, b.w + 2 * pad), h = Math.min(S.page.h - y, b.h + 2 * pad);
@@ -803,8 +819,10 @@
     try {
       var cv = await renderCanvas(S.page, { x: x, y: y, w: w, h: h }, k);
       var blob = await toBlob(cv, 'image/png');
+      var strong = !!(S.sel && S.sel.sids && S.sel.sids.size);
+      var note = ($('askIn').value || '').trim(); $('askIn').value = '';
       openDrawer();
-      Q.ask({ blob: blob, mode: mode });
+      Q.ask({ blob: blob, strong: strong, note: note });
     } catch (e) { Q.toast('这一块截不下来：' + Q.errMsg(e)); }
   }
 
@@ -1091,7 +1109,7 @@
     var grid = $('nbGrid'); grid.textContent = '';
     var nbs = (await DB.all('notebook')).sort(function (a, b) { return b.updated - a.updated; });
     if (!nbs.length) {
-      grid.appendChild(el('div', 'empty book-empty', '还没有笔记本。点“新建笔记本”开始写，或者导入一个 PDF，直接在上面做笔记。'));
+      grid.appendChild(el('div', 'empty book-empty', '还没有文档。点“导入 PDF / 图片”，把资料放进来，直接读、写、圈着问 AI；也可以新建空白笔记本。'));
       return;
     }
     nbs.forEach(function (nb) {
@@ -1174,11 +1192,31 @@
   $('edTitle').addEventListener('click', function () { if (S.nb) renameDialog(S.nb); });
 
   /* ---------- 导入 PDF / 图片 ---------- */
+  /* 读取 PDF 自带的目录（书签），转成页码；没有目录就是空 */
+  async function readOutline(pdf) {
+    var out = [];
+    var ol = await pdf.getOutline();
+    if (!ol) return out;
+    async function walk(items, depth) {
+      for (var i = 0; i < items.length && out.length < 400; i++) {
+        var it = items[i], pi = -1;
+        try {
+          var dest = it.dest;
+          if (typeof dest === 'string') dest = await pdf.getDestination(dest);
+          if (Array.isArray(dest) && dest[0] != null) pi = (typeof dest[0] === 'object') ? await pdf.getPageIndex(dest[0]) : dest[0];
+        } catch (e) {}
+        if (pi >= 0 && it.title) out.push({ t: String(it.title).slice(0, 80), p: pi, d: depth });
+        if (it.items && it.items.length && depth < 2) await walk(it.items, depth + 1);
+      }
+    }
+    await walk(ol, 0);
+    return out;
+  }
   async function importFile(file) {
     var isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
     var title = file.name.replace(/\.[^.]+$/, '') || '导入的笔记';
     var nb = { id: 'nb-' + DB.uid(), type: 'notebook', title: title, ts: Date.now(), updated: Date.now(), tpl: 'blank',
-      color: SPINES[Math.floor(Math.random() * SPINES.length)], pageIds: [], lastIdx: 0 };
+      color: SPINES[Math.floor(Math.random() * SPINES.length)], pageIds: [], lastIdx: 0, imported: true };
     try {
       if (isPdf) {
         await Q.loadPdfJs();
@@ -1196,6 +1234,7 @@
           await DB.put(p); nb.pageIds.push(p.id);
           c.width = c.height = 1;
         }
+        try { nb.outline = await readOutline(pdf); } catch (e) { nb.outline = []; }
       } else if (/^image\//.test(file.type)) {
         var im = await AI.prepareImage(file, 1600), bm = await createImageBitmap(im.blob);
         var p1 = newPage(nb, { bg: im.blob, h: Math.round(PW * bm.height / bm.width) });
@@ -1218,12 +1257,12 @@
     $('nList').hidden = true; $('nEditor').hidden = false;
     $('edTitle').textContent = nb.title;
     updateUndo(); updateFingerBtn(); updatePageBtn();
-    setTool('pen');
+    setTool(nb.tool && TOOLS.indexOf(nb.tool) >= 0 ? nb.tool : (nb.imported ? 'read' : 'pen'));
     requestAnimationFrame(function () { layout(); stage.scrollTop = 0; });
   }
   async function closeEditor() {
     await saveNow(); if (S.thumbPending) await makeThumb();
-    closeDrawer(); document.body.classList.remove('focus'); $('edFocus').setAttribute('aria-pressed', 'false');
+    closeDrawer(); closeToc(); document.body.classList.remove('focus'); $('edFocus').setAttribute('aria-pressed', 'false');
     S.nb = null; S.page = null; S.pages = []; releaseUrls();
     $('nEditor').hidden = true; $('nList').hidden = false; renderList();
   }
@@ -1235,9 +1274,10 @@
     S.idx = i; S.page = S.pages[i]; S.nb.lastIdx = i;
     S.history = []; S.future = []; S.sel = null; S.selObj = null; $('selBar').hidden = true;
     updateUndo(); updatePageBtn(); layout(); stage.scrollTop = 0;
+    if (!toc.hidden) renderToc(true);
   }
   function updatePageBtn() {
-    $('edPages').textContent = (S.idx + 1) + ' / ' + S.pages.length;
+    $('edPages').textContent = '目录 ' + (S.idx + 1) + ' / ' + S.pages.length;
     $('edPrev').disabled = S.idx <= 0; $('edNext').disabled = S.idx >= S.pages.length - 1;
   }
   (function () {
@@ -1320,7 +1360,6 @@
     if (gone === S.page) { S.idx = Math.min(i, S.pages.length - 1); S.page = S.pages[S.idx]; S.nb.lastIdx = S.idx; S.history = []; S.future = []; S.sel = null; S.selObj = null; updateUndo(); updatePageBtn(); layout(); }
     else { S.idx = S.pages.indexOf(S.page); updatePageBtn(); }
   }
-  $('edPages').addEventListener('click', pagesDialog);
 
   /* ================= 导出 ================= */
   function buildPdf(pages) {
@@ -1405,19 +1444,125 @@
   });
 
   /* ================= AI 抽屉与专注模式 ================= */
+  var drawer = $('nDrawer'), edBody = drawer.parentNode;
+  var AIWIN = null;
+  try { AIWIN = JSON.parse(localStorage.getItem('quanwen.aiwin') || 'null'); } catch (e) {}
+  function aiGeomDefault() {
+    var W = edBody.clientWidth, H = edBody.clientHeight;
+    if (W < 700) return { x: 8, y: Math.round(H * 0.34), w: W - 16, h: Math.round(H * 0.64) };
+    var w = Math.min(420, Math.round(W * 0.4));
+    return { x: W - w - 12, y: 12, w: w, h: Math.max(260, H - 24) };
+  }
+  function applyAiGeom(g) {
+    var W = edBody.clientWidth, H = edBody.clientHeight;
+    g = g || AIWIN || aiGeomDefault();
+    var w = clamp(g.w, 260, Math.max(260, W - 8)), h = clamp(g.h, 200, Math.max(200, H - 8));
+    var x = clamp(g.x, 4, Math.max(4, W - w - 4)), y = clamp(g.y, 4, Math.max(4, H - h - 4));
+    drawer.style.left = x + 'px'; drawer.style.top = y + 'px'; drawer.style.width = w + 'px'; drawer.style.height = h + 'px';
+    return { x: x, y: y, w: w, h: h };
+  }
+  function saveAiGeom() {
+    var g = { x: drawer.offsetLeft, y: drawer.offsetTop, w: drawer.offsetWidth, h: drawer.offsetHeight };
+    AIWIN = g; try { localStorage.setItem('quanwen.aiwin', JSON.stringify(g)); } catch (e) {}
+  }
   function openDrawer() {
-    $('nDrawer').hidden = false; $('nDrawerBody').appendChild($('answerPane'));
-    $('edAI').setAttribute('aria-pressed', 'true'); layout();
+    drawer.hidden = false; applyAiGeom();
+    $('edAI').setAttribute('aria-pressed', 'true');
   }
   function closeDrawer() {
-    $('nDrawer').hidden = true;
-    var grid = $('readerGrid'), pane = $('answerPane');
-    if (pane.parentNode !== grid) grid.appendChild(pane);
+    drawer.hidden = true;
     $('edAI').setAttribute('aria-pressed', 'false');
-    if (S.page && !$('nEditor').hidden) layout();
   }
-  $('edAI').addEventListener('click', function () { if ($('nDrawer').hidden) openDrawer(); else closeDrawer(); });
+  $('edAI').addEventListener('click', function () { if (drawer.hidden) openDrawer(); else closeDrawer(); });
   $('drawerClose').addEventListener('click', closeDrawer);
+  /* 拖标题栏移动；拖左下 / 右下角改大小 */
+  (function () {
+    function track(startEv, onMove) {
+      var id = startEv.pointerId, t = startEv.target;
+      try { t.setPointerCapture(id); } catch (e) {}
+      function mv(e) { if (e.pointerId === id) onMove(e.clientX - startEv.clientX, e.clientY - startEv.clientY); }
+      function up(e) {
+        if (e.pointerId !== id) return;
+        t.removeEventListener('pointermove', mv); t.removeEventListener('pointerup', up); t.removeEventListener('pointercancel', up);
+        saveAiGeom();
+      }
+      t.addEventListener('pointermove', mv); t.addEventListener('pointerup', up); t.addEventListener('pointercancel', up);
+    }
+    $('drawerHead').addEventListener('pointerdown', function (e) {
+      if (e.target.closest && e.target.closest('button')) return;
+      e.preventDefault();
+      var g0 = { x: drawer.offsetLeft, y: drawer.offsetTop, w: drawer.offsetWidth, h: drawer.offsetHeight };
+      track(e, function (dx, dy) { applyAiGeom({ x: g0.x + dx, y: g0.y + dy, w: g0.w, h: g0.h }); });
+    });
+    $('rzR').addEventListener('pointerdown', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      var g0 = { x: drawer.offsetLeft, y: drawer.offsetTop, w: drawer.offsetWidth, h: drawer.offsetHeight };
+      track(e, function (dx, dy) { applyAiGeom({ x: g0.x, y: g0.y, w: g0.w + dx, h: g0.h + dy }); });
+    });
+    $('rzL').addEventListener('pointerdown', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      var g0 = { x: drawer.offsetLeft, y: drawer.offsetTop, w: drawer.offsetWidth, h: drawer.offsetHeight };
+      track(e, function (dx, dy) {
+        var w = clamp(g0.w - dx, 260, g0.x + g0.w - 4);
+        applyAiGeom({ x: g0.x + g0.w - w, y: g0.y, w: w, h: g0.h + dy });
+      });
+    });
+  })();
+
+  /* ---------- 目录：页面缩略图、PDF 目录、跳页 ---------- */
+  var toc = $('nToc'), tocIO = null;
+  function openToc() { toc.hidden = false; $('edPages').setAttribute('aria-pressed', 'true'); renderToc(); }
+  function closeToc() { toc.hidden = true; $('edPages').setAttribute('aria-pressed', 'false'); if (tocIO) { tocIO.disconnect(); tocIO = null; } }
+  function tocJump(i) { gotoPage(i); if (edBody.clientWidth < 700) closeToc(); else renderToc(true); }
+  function renderToc(keepScroll) {
+    var body = $('tocBody'), top = toc.scrollTop;
+    body.textContent = '';
+    if (tocIO) { tocIO.disconnect(); tocIO = null; }
+    var ol = S.nb && S.nb.outline;
+    if (ol && ol.length) {
+      body.appendChild(el('div', 'lbl toc-lbl', 'PDF 目录'));
+      var list = el('div', 'toc-ol');
+      ol.forEach(function (o) {
+        var b = el('button', 'toc-item', o.t); b.type = 'button'; b.style.paddingLeft = (10 + (o.d || 0) * 14) + 'px';
+        b.appendChild(el('span', 'pn', String(o.p + 1)));
+        b.addEventListener('click', function () { tocJump(clamp(o.p, 0, S.pages.length - 1)); });
+        list.appendChild(b);
+      });
+      body.appendChild(list);
+    }
+    body.appendChild(el('div', 'lbl toc-lbl', '页面（' + S.pages.length + '）'));
+    var grid = el('div', 'toc-grid');
+    tocIO = ('IntersectionObserver' in window) ? new IntersectionObserver(function (ents) {
+      ents.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        var im = en.target; tocIO.unobserve(im);
+        var p = S.pages[+im.dataset.i], bl = p && (p.thumb || p.bg);
+        if (bl) { var u = URL.createObjectURL(bl); im.src = u; im.onload = function () { URL.revokeObjectURL(u); }; }
+      });
+    }, { root: toc, rootMargin: '200px' }) : null;
+    S.pages.forEach(function (p, i) {
+      var c = el('button', 'toc-pg' + (i === S.idx ? ' cur' : '')); c.type = 'button'; c.setAttribute('aria-label', '第 ' + (i + 1) + ' 页');
+      var im = el('img'); im.alt = ''; im.dataset.i = i; im.style.aspectRatio = PW + ' / ' + (p.h || 1414);
+      c.appendChild(im); c.appendChild(el('span', 'pn', String(i + 1)));
+      c.addEventListener('click', function () { tocJump(i); });
+      grid.appendChild(c);
+      if (tocIO) tocIO.observe(im);
+      else { var bl = p.thumb || p.bg; if (bl) { var u = URL.createObjectURL(bl); im.src = u; } }
+    });
+    body.appendChild(grid);
+    if (keepScroll) toc.scrollTop = top;
+    else { var cur0 = grid.children[S.idx]; if (cur0) setTimeout(function () { cur0.scrollIntoView({ block: 'center' }); }, 30); }
+  }
+  $('edPages').addEventListener('click', function () { if (toc.hidden) openToc(); else closeToc(); });
+  $('tocClose').addEventListener('click', closeToc);
+  $('tocManage').addEventListener('click', pagesDialog);
+  function tocGo() {
+    var v = parseInt($('tocGo').value, 10); if (!v) return;
+    $('tocGo').value = ''; tocJump(clamp(v - 1, 0, S.pages.length - 1));
+  }
+  $('tocGoBtn').addEventListener('click', tocGo);
+  $('tocGo').addEventListener('keydown', function (e) { if (e.key === 'Enter') tocGo(); });
+
   $('edFocus').addEventListener('click', function () {
     var on = !document.body.classList.contains('focus');
     document.body.classList.toggle('focus', on);
@@ -1436,7 +1581,8 @@
   /* ================= 对外 ================= */
   window.QWNotes = {
     enter: function () { if (!$('nEditor').hidden) { layout(); } else renderList(); },
-    leave: function () { saveNow(); closeDrawer(); document.body.classList.remove('focus'); $('edFocus').setAttribute('aria-pressed', 'false'); },
+    openAI: function () { openDrawer(); },
+    leave: function () { saveNow(); closeDrawer(); closeToc(); document.body.classList.remove('focus'); $('edFocus').setAttribute('aria-pressed', 'false'); },
     canInsert: function () { return !!S.page && !$('nEditor').hidden && !$('view-notes').hidden; },
     addSticky: addSticky,
     insertImage: insertImage,
@@ -1444,4 +1590,5 @@
   };
 
   renderOpts(); updateUndo(); updateFingerBtn();
+  renderList();
 })();
